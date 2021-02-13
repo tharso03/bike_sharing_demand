@@ -1,0 +1,139 @@
+---
+title: "Bike Sharing Demand"
+author: "Tharso Rossiter"
+date: "1/30/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(ggplot2)
+library(lubridate)
+library(plyr)
+library(readr)
+library(corrplot)
+library(partykit)
+```
+
+
+# Bike Sharing Demand Competition
+
+You are provided hourly rental data spanning two years. For this competition, the training set is comprised of the first 19 days of each month, while the test set is the 20th to the end of the month. You must predict the total count of bikes rented during each hour covered by the test set, using only information available prior to the rental period.
+
+Algorithms to try : Random Forest
+
+## Data Fields
+
+datetime - hourly date + timestamp  
+season -  1 = spring, 2 = summer, 3 = fAll, 4 = winter   
+holiday - whether the day is considered a holiday  
+workingday - whether the day is neither a weekend nor holiday  
+weather - 1: Clear, Few clouds, Partly cloudy, Partly cloudy  
+2: Mist + Cloudy, Mist + Broken clouds, Mist + Few clouds, Mist  
+3: Light Snow, Light Rain + Thunderstorm + Scattered clouds, Light Rain + Scattered clouds  
+4: Heavy Rain + Ice PAllets + Thunderstorm + Mist, Snow + Fog   
+temp - temperature in Celsius  
+atemp - "feels like" temperature in Celsius  
+humidity - relative humidity  
+windspeed - wind speed  
+casual - number of non-registered user rentals initiated  
+registered - number of registered user rentals initiated  
+count - number of total rentals  
+
+## Loading Data
+
+```{r loadingdata, echo = TRUE, results = "hide"}
+test <- read_csv('/home/tharso/Documents/Estatística/bike-sharing-demand/test.csv')
+train <- read_csv('/home/tharso/Documents/Estatística/bike-sharing-demand/train.csv')
+```
+
+The dimensions of the test set are : `r dim(test)`.  
+The dimensions of the train set are : `r dim(train)`.  
+The test set has three extra variables : casual, registered and count.
+We want to predict count in the train dataset.  
+
+We will create an "All" dataset, consisting of test and training data.  
+
+```{r binding}
+test$casual <- NA
+test$registered <- NA
+test$count <- NA
+All <- rbind(train,test)
+```
+
+The dimentions of "All" are `r dim(All)`, the first `r nrow(test)` rows are test data and the remaining `r nrow(train)` rows are training data.
+
+## Feature Engineering:
+
+```{r modify_vars}
+All$season <- as.factor(revalue(as.character(All$season),c('1' = 'spring', '2' = 'summer', '3' = 'fall', '4' = 'winter')))
+
+All$hour <- as.factor(hour(All$datetime))
+All$date <- as.factor(mday(All$datetime))
+All$month <- as.factor(month(All$datetime))
+All$year <- as.factor(year(All$datetime))
+All$weekday <- as.factor(wday(All$datetime))
+
+week_days <- c('1' = 'Sunday', '2' = 'Monday', '3' = 'Tuesday',
+                '4' = 'Wednesday', '5' = 'Thursday', '6' = 'Friday', '7' = 'Saturday')
+
+All$weekday <- revalue(All$weekday,week_days)
+
+
+All$weather <- as.factor(All$weather)
+
+All$holiday <- as.factor(All$holiday)
+All$workingday <- as.factor(All$workingday)
+All$season <- as.factor(All$season)
+```
+
+***
+
+Checking for missing values:
+```{r check_missing_values}
+colSums(is.na(All))
+```
+
+The only missing values are the ones on the test set we are trying to predict.
+
+
+Splitting between "real numeric" and categorical variables:
+
+```{r cat_x_num}
+num_vars <- c('temp','humidity','windspeed','count','registered','casual','atemp')
+cat_vars <- names(All)[!(names(All) %in% num_vars)]
+```
+
+
+Exploring correlations between the numeric variables.
+
+```{r corrplot}
+all_numvar <- All[,num_vars]
+
+cor_numvar <- cor(all_numvar, use = 'pairwise.complete.obs')
+
+cor_sorted <- as.matrix(sort(cor_numvar[,'count'], decreasing = TRUE))
+
+corrplot(cor_numvar, type = 'lower', method = 'number', tl.col = 'black')
+```
+
+We see that:
+
+* temp and atemp are highly collinear
+* humidity and temp are correlated with count
+
+## Model Building
+
+```{r tree_model}
+formula <- count ~ season + holiday + workingday + weather + temp + humidity + hour + weekday + month + year + atemp
+
+tree <- ctree(formula,All[!is.na(All$count),])
+
+prevs <- predict(tree,All[is.na(All$count),])
+
+submit <- data.frame(datetime = test$datetime, count = prevs)
+
+write.csv(submit, file = 'submit_8_bikerental', row.names = FALSE)
+```
+
